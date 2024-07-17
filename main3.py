@@ -1,4 +1,5 @@
-import os, sys
+import os
+import sys
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -10,9 +11,8 @@ from termcolor import cprint
 from tqdm import tqdm
 
 from src.dataset_1 import ThingsMEGDataset
-from src.models import BasicConvClassifier
+from src.models3 import BasicConvClassifier
 from src.utils import set_seed
-
 
 @hydra.main(version_base=None, config_path="configs", config_name="config")
 def run(args: DictConfig):
@@ -39,14 +39,15 @@ def run(args: DictConfig):
     # ------------------
     #       Model
     # ------------------
+    num_subjects = len(torch.unique(train_set.subject_idxs))
     model = BasicConvClassifier(
-        train_set.num_classes, train_set.seq_len, train_set.num_channels
+        train_set.num_classes, train_set.seq_len, train_set.num_channels, num_subjects, dropout_prob=0.5
     ).to(args.device)
 
     # ------------------
     #     Optimizer
     # ------------------
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=0.001)
 
     # ------------------
     #   Start training
@@ -60,12 +61,11 @@ def run(args: DictConfig):
         print(f"Epoch {epoch+1}/{args.epochs}")
         
         train_loss, train_acc, val_loss, val_acc = [], [], [], []
-        
         model.train()
-        for X, y, subject_idxs in tqdm(train_loader, desc="Train"):
-            X, y = X.to(args.device), y.to(args.device)
-
-            y_pred = model(X)
+        for X, y, subject_idxs in tqdm(train_loader, desc="Training"):
+            X, y, subject_idxs = X.to(args.device), y.to(args.device), subject_idxs.to(args.device)
+            
+            y_pred = model(X, subject_idxs)
             
             loss = F.cross_entropy(y_pred, y)
             train_loss.append(loss.item())
@@ -79,15 +79,15 @@ def run(args: DictConfig):
 
         model.eval()
         for X, y, subject_idxs in tqdm(val_loader, desc="Validation"):
-            X, y = X.to(args.device), y.to(args.device)
+            X, y, subject_idxs = X.to(args.device), y.to(args.device), subject_idxs.to(args.device)
             
             with torch.no_grad():
-                y_pred = model(X)
+                y_pred = model(X, subject_idxs)
             
             val_loss.append(F.cross_entropy(y_pred, y).item())
             val_acc.append(accuracy(y_pred, y).item())
 
-        print(f"Epoch {epoch+1}/{args.epochs} | train loss: {np.mean(train_loss):.3f} | train acc: {np.mean(train_acc):.5f} | val loss: {np.mean(val_loss):.3f} | val acc: {np.mean(val_acc):.5f}")
+        print(f"Epoch {epoch+1}/{args.epochs} | train loss: {np.mean(train_loss):.5f} | train acc: {np.mean(train_acc):.5f} | val loss: {np.mean(val_loss):.5f} | val acc: {np.mean(val_acc):.5f}")
         torch.save(model.state_dict(), os.path.join(logdir, "model_last.pt"))
         if args.use_wandb:
             wandb.log({"train_loss": np.mean(train_loss), "train_acc": np.mean(train_acc), "val_loss": np.mean(val_loss), "val_acc": np.mean(val_acc)})
@@ -106,12 +106,11 @@ def run(args: DictConfig):
     preds = [] 
     model.eval()
     for X, subject_idxs in tqdm(test_loader, desc="Validation"):        
-        preds.append(model(X.to(args.device)).detach().cpu())
+        preds.append(model(X.to(args.device), subject_idxs.to(args.device)).detach().cpu())
         
     preds = torch.cat(preds, dim=0).numpy()
     np.save(os.path.join(logdir, "submission"), preds)
     cprint(f"Submission {preds.shape} saved at {logdir}", "cyan")
-
 
 if __name__ == "__main__":
     run()
