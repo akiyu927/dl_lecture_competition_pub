@@ -42,38 +42,32 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class BasicConvClassifier(nn.Module):
-    def __init__(self, num_classes, seq_len, num_channels, num_subjects, embedding_dim=50):
+    def __init__(self, num_classes, seq_len, num_channels, num_subjects, embedding_dim=50, dropout_prob=0.5):
         super(BasicConvClassifier, self).__init__()
         self.conv1 = nn.Conv1d(num_channels, 64, kernel_size=3, padding=1)
         self.conv2 = nn.Conv1d(64, 128, kernel_size=3, padding=1)
         self.embedding_dim = embedding_dim
         
-        # Calculate the size after convolutions to define the fully connected layer
+        # Adjust the size based on actual output after conv layers
         self.seq_len = seq_len
-        
-        # Assuming the input size (seq_len) does not change after conv layers with padding=1
         conv_output_size = 128 * 35
         
         self.fc1 = nn.Linear(conv_output_size, 256)
         self.fc2 = nn.Linear(256 + embedding_dim, 128)  # Concatenate subject embeddings
         self.fc3 = nn.Linear(128, num_classes)
         self.subject_embedding = nn.Embedding(num_subjects, embedding_dim)  # Embedding layer for subject indices
+        
+        # Dropout layers
+        self.dropout = nn.Dropout(dropout_prob)
 
     def forward(self, x, subject_idxs):
-        # print(f"Input shape: {x.shape}")
         x = F.relu(self.conv1(x))
-        # print(f"After conv1: {x.shape}")
         x = F.relu(self.conv2(x))
-        # print(f"After conv2: {x.shape}")
         x = x.view(x.size(0), -1)  # Flatten
-        # print(f"After flatten: {x.shape}")
-        x = F.relu(self.fc1(x))
-        # print(f"After fc1: {x.shape}")
+        x = self.dropout(F.relu(self.fc1(x)))
         subject_embeds = self.subject_embedding(subject_idxs)
-        # print(f"Subject embeddings: {subject_embeds.shape}")
         x = torch.cat((x, subject_embeds), dim=1)
-        # print(f"After concatenation: {x.shape}")
-        x = F.relu(self.fc2(x))
+        x = self.dropout(F.relu(self.fc2(x)))
         x = self.fc3(x)
         return x
 
